@@ -1,0 +1,46 @@
+experiment: D2SAC
+agent: rainbow
+policy: 
+  name: agents.RainbowDQN
+  device: cuda
+  settings:
+
+
+train:
+  data_collection_steps: 3000
+  train_steps: 500000
+  max_episode_steps: 200
+  nb_eval_episodes: 150
+  eval_frequency: 20000
+  seed: 100
+  save_tensorboard: true
+  log_frequency: 5000
+  reward processor:
+    name: utils.train_utils.RewardProcessor
+    settings:
+  #    beta: 0.0001
+
+env:
+  name: singleExp.singleUAV.UAV
+  settings:
+    max_it: 200
+    width: 1000
+    height: 1000
+    d_max: 50
+    r_cov : 100
+    seed: 100
+    out_bounds_penalty: 38
+    reward2_a: 0.3
+    reward2_b: 2.5
+    map_autoencoder_model_path: singleExp/autoencoder_model.ph
+
+buffer:
+  name: singleExp.singleBuffer.ReplayBuffer
+  settings:
+    buffer_capacity: 300000
+    exploration_code_dim: 256
+
+logger:
+  eval episode performance:
+    - step
+    - exploration

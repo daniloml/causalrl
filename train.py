@@ -1,39 +1,44 @@
-import string
 import numpy as np
 import torch
 import argparse
 import time
 import os
-import sys
 import yaml
 from tqdm import tqdm
-from utils.logger import Logger
+from utils.logger import Logger, EvalMonitor
 from utils.train_utils import initiate_class
 from utils.video import VideoRecorder
 
 # Runs policy for X episodes and returns average reward
 # A fixed seed is used for the eval environment
-def eval_policy(policy, logger, video_recorder, seed, env_cfg, step, nb_eval_episodes):
+def eval_policy(policy, logger, monitor, video_recorder, seed, env_cfg, step, nb_eval_episodes):
     eval_env = initiate_class(env_cfg['name'], env_cfg['settings'])
     eval_env.seed(seed+step)
-    average_episode_reward = 0
-    for episode in range(nb_eval_episodes):
-        obs, _ = eval_env.reset()
+    average_episode_reward, list_episode_reward = 0, []
+    
+    for episode in tqdm(range(0, nb_eval_episodes), desc ="Model Evaluation"):
+        obs, info = eval_env.reset()
         video_recorder.init(enabled=(episode == 0))
         done = False
         episode_reward, episode_step = 0, 0
+
         while not done and (episode_step < env_cfg['settings']['max_it']):
             action = policy.act(obs, sample=False)
-            obs, reward, done, _ = eval_env.step(action)
+            obs, reward, done, info = eval_env.step(action)
             video_recorder.record(eval_env)
             episode_reward += reward
-            episode_step+=1
+            episode_step += 1
 
         average_episode_reward += episode_reward
+        list_episode_reward.append(episode_reward)
         video_recorder.save(f'{step}.mp4')
+        monitor.collect_episode_performance(info)
+
     average_episode_reward /= nb_eval_episodes
     logger.log('eval/episode_reward', average_episode_reward, step)
+    logger.log_histogram('eval/episode_reward_distribution', np.array(list_episode_reward), step)
     logger.dump(step)
+    monitor.dump_end_eval(logger, step)
 
 
 def run(args):
@@ -57,7 +62,8 @@ def run(args):
                     log_frequency=cfg['train']['log_frequency'],
                     agent=cfg['agent'])
     video_recorder = VideoRecorder(None) #self.work_dir if cfg.save_video else None)
-
+    eval_monitor = EvalMonitor(cfg['logger'])
+    
     # Env init
     env_cfg = cfg['env']
     env = initiate_class(env_cfg['name'], env_cfg['settings'])
@@ -76,7 +82,9 @@ def run(args):
 
 	# Initialize policies
     policy = initiate_class(cfg['policy']['name'], policy_cfg, multiple_arguments=False)
-    
+    if 'load' in policy_cfg.keys():
+        policy.load(policy_cfg['load'])
+
     # Buffer initialization and data collection
     buffer_cfg = cfg['buffer']
     buffer_cfg['settings']['obs_dim'] = env.observation_space.shape[0]
@@ -89,11 +97,15 @@ def run(args):
     step, episode, episode_reward, done = 0, 0, 0, True
     start_time = time.time()
     while step < cfg['train']['train_steps']:
+        if step % cfg['checkpoint_frequency'] == 0:
+            pass # not implemented yet
+
         # evaluate agent periodically
         if step % cfg['train']['eval_frequency'] == 0:
             logger.log('eval/episode', episode, step)
-            eval_policy(policy, logger, video_recorder, ENV_SEED, env_cfg, step, cfg['train']['nb_eval_episodes'])
+            eval_policy(policy, logger, eval_monitor, video_recorder, ENV_SEED, env_cfg, step, cfg['train']['nb_eval_episodes'])
 
+        # log end of episode or truncation and reset env
         if done or (episode_step >= cfg['train']['max_episode_steps']):
             if step > 0:
                 logger.log('train/duration', time.time() - start_time, step)
@@ -116,10 +128,9 @@ def run(args):
         # run training update
         policy.update(replay_buffer, reward_processor, logger, step)
 
-        next_obs, reward, done, _ = env.step(action)
+        next_obs, reward, done, info = env.step(action)
         reward_processor.update(reward)
 
-        # allow infinite bootstrap
         done = float(done)
         episode_reward += reward
 
@@ -129,11 +140,12 @@ def run(args):
         episode_step += 1
         step += 1
 
+    policy.save(exp_folder+"models/")
+
 
 def data_collection(env, replay_buffer, data_collection_steps):
     done = True
 
-    #for step in range(data_collection_steps):
     for step in tqdm(range(0, data_collection_steps), desc ="Replay Buffer filling"):
         if done:
             obs, _ = env.reset()
