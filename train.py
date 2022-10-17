@@ -86,19 +86,31 @@ def run(args):
         policy.load(policy_cfg['load'])
 
     # Buffer initialization and data collection
-    buffer_cfg = cfg['buffer']
-    buffer_cfg['settings']['obs_dim'] = env.observation_space.shape[0]
-    buffer_cfg['settings']['action_dim'] = env.action_space.shape[0]
-    replay_buffer = initiate_class(buffer_cfg['name'], buffer_cfg['settings'])
-    data_collection(env, replay_buffer, cfg['train']['data_collection_steps'])
-    reward_processor = initiate_class(cfg['train']['reward processor']['name'], cfg['train']['reward processor']['settings'])
-    reward_processor.fit(replay_buffer.reward)
+    memory_cfg = cfg['memory']
+    memory_cfg['settings']['obs_dim'] = env.observation_space.shape[0]
+    memory_cfg['settings']['action_dim'] = env.action_space.shape[0]
+    memory = initiate_class(memory_cfg['name'], memory_cfg['settings'], multiple_arguments=False)
+    priority_weight_increase = (1 - args.priority_weight) / (args.T_max - args.learn_start)
+    
+    data_collection_noise(env=env, 
+                          memory=memory, 
+                          data_collection_steps=cfg['train']['data_collection_steps'],
+                          reset_noise_steps=cfg['train']['replay_frequency'],
+                          reward_clip=cfg['train']['reward_clip'])
+
+#    reward_processor = initiate_class(cfg['train']['reward processor']['name'], cfg['train']['reward processor']['settings'])
+#    reward_processor.fit(memory.reward)
 
     step, episode, episode_reward, done = 0, 0, 0, True
     start_time = time.time()
-    while step < cfg['train']['train_steps']:
+    for step in range(cfg['train']['train_steps']):
+        memory.priority_weight = min(memory.priority_weight + priority_weight_increase, 1)  # Anneal importance sampling weight β to 1
+        if step % cfg["replay_frequency"] == 0:
+            policy.reset_noise()
+            policy.update(memory, logger, step)
+            
         if step % cfg['checkpoint_frequency'] == 0:
-            pass # not implemented yet
+            policy.save(exp_folder+"checkpoint/", f"checkpoint{step}.ph")
 
         # evaluate agent periodically
         if step % cfg['train']['eval_frequency'] == 0:
@@ -123,25 +135,43 @@ def run(args):
             logger.log('train/episode', episode, step)
 
         # sample action for data collection
-        action = policy.act(obs, sample=True)
+        action = policy.act(obs)
 
-        # run training update
-        policy.update(replay_buffer, reward_processor, logger, step)
+        next_obs, reward, done, _ = env.step(action)
+#        reward_processor.update(reward)
 
-        next_obs, reward, done, info = env.step(action)
-        reward_processor.update(reward)
-
-        done = float(done)
         episode_reward += reward
-
-        replay_buffer.add(obs, action, next_obs, reward, done)
+        if args.reward_clip > 0:
+            reward = max(min(reward, args.reward_clip), -args.reward_clip)  # Clip rewards
+        memory.add(obs, action, reward, done)
 
         obs = next_obs
         episode_step += 1
-        step += 1
-
+        
     policy.save(exp_folder+"models/")
 
+def data_collection_noise(env, 
+                          memory, 
+                          policy, 
+                          data_collection_steps, 
+                          reset_noise_steps,
+                          reward_clip):
+    done = True
+
+    for step in tqdm(range(0, data_collection_steps), desc ="Replay Buffer filling"):
+        if done:
+            obs, _ = env.reset()
+            done = False
+
+        if step % reset_noise_steps==0:
+            policy.reset_noise()
+
+        # sample action for data collection
+        action = policy.act(obs)
+        next_obs, reward, done, _ = env.step(action)
+        if reward_clip > 0:
+            reward = max(min(reward, args.reward_clip), -args.reward_clip) 
+        memory.append(obs, action, reward, done)
 
 def data_collection(env, replay_buffer, data_collection_steps):
     done = True
@@ -155,10 +185,7 @@ def data_collection(env, replay_buffer, data_collection_steps):
         action = env.action_space.sample()
         next_obs, reward, done, _ = env.step(action)
         replay_buffer.add(obs, action, next_obs, reward, done)
-
-        obs = next_obs
-        step += 1
-
+        obs = next_obs 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

@@ -3,30 +3,32 @@ from __future__ import division
 import os
 import numpy as np
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 from torch import optim
 from torch.nn.utils import clip_grad_norm_
-
 from model import DQN
+from model.layers.NoisyLinear import NoisyLinear
 
 class DQN(nn.Module):
-  def __init__(self, args, action_space):
+  def __init__(self, cfg, action_space):
     super(DQN, self).__init__()
-    self.atoms = args.atoms
+    self.atoms = cfg["atoms"]
     self.action_space = action_space
 
-    if args.architecture == 'canonical':
-      self.convs = nn.Sequential(nn.Conv2d(args.history_length, 32, 8, stride=4, padding=0), nn.ReLU(),
+    if cfg["architecture"] == 'canonical':
+      self.convs = nn.Sequential(nn.Conv2d(cfg["history_length"], 32, 8, stride=4, padding=0), nn.ReLU(),
                                  nn.Conv2d(32, 64, 4, stride=2, padding=0), nn.ReLU(),
                                  nn.Conv2d(64, 64, 3, stride=1, padding=0), nn.ReLU())
       self.conv_output_size = 3136
-    elif args.architecture == 'data-efficient':
-      self.convs = nn.Sequential(nn.Conv2d(args.history_length, 32, 5, stride=5, padding=0), nn.ReLU(),
+    elif cfg["architecture"] == 'data-efficient':
+      self.convs = nn.Sequential(nn.Conv2d(cfg["history_length"], 32, 5, stride=5, padding=0), nn.ReLU(),
                                  nn.Conv2d(32, 64, 5, stride=5, padding=0), nn.ReLU())
       self.conv_output_size = 576
-    self.fc_h_v = NoisyLinear(self.conv_output_size, args.hidden_size, std_init=args.noisy_std)
-    self.fc_h_a = NoisyLinear(self.conv_output_size, args.hidden_size, std_init=args.noisy_std)
-    self.fc_z_v = NoisyLinear(args.hidden_size, self.atoms, std_init=args.noisy_std)
-    self.fc_z_a = NoisyLinear(args.hidden_size, action_space * self.atoms, std_init=args.noisy_std)
+    self.fc_h_v = NoisyLinear(self.conv_output_size, cfg["hidden_size"], std_init=cfg["noisy_std"])
+    self.fc_h_a = NoisyLinear(self.conv_output_size, cfg["hidden_size"], std_init=cfg["noisy_std"])
+    self.fc_z_v = NoisyLinear(cfg["hidden_size"], self.atoms, std_init=cfg["noisy_std"])
+    self.fc_z_a = NoisyLinear(cfg["hidden_size"], action_space * self.atoms, std_init=cfg["noisy_std"])
 
   def forward(self, x, log=False):
     x = self.convs(x)
@@ -46,37 +48,37 @@ class DQN(nn.Module):
       if 'fc' in name:
         module.reset_noise()
 
-class RainbowDQN():
-  def __init__(self, args, env):
+class Rainbow(nn.Module):
+  def __init__(self, cfg, env):
     self.action_space = env.action_space()
-    self.atoms = args.atoms
-    self.Vmin = args.V_min
-    self.Vmax = args.V_max
-    self.support = torch.linspace(args.V_min, args.V_max, self.atoms).to(device=args.device)  # Support (range) of z
-    self.delta_z = (args.V_max - args.V_min) / (self.atoms - 1)
-    self.batch_size = args.batch_size
-    self.n = args.multi_step
-    self.discount = args.discount
-    self.norm_clip = args.norm_clip
+    self.atoms = cfg['atoms']
+    self.Vmin = cfg["V_min"]
+    self.Vmax = cfg["V_max"]
+    self.support = torch.linspace(cfg["V_min"], cfg["V_max"], self.atoms).to(device=cfg["device"])  # Support (range) of z
+    self.delta_z = (cfg["V_max"] - cfg["V_min"]) / (self.atoms - 1)
+    self.batch_size = cfg["batch_size"]
+    self.n = cfg["multi_step"]
+    self.discount = cfg["discount"]
+    self.norm_clip = cfg["norm_clip"]
 
-    self.online_net = DQN(args, self.action_space).to(device=args.device)
-    if args.model:  # Load pretrained model if provided
-      if os.path.isfile(args.model):
-        state_dict = torch.load(args.model, map_location='cpu')  # Always load tensors onto CPU by default, will shift to GPU if necessary
+    self.online_net = DQN(cfg, self.action_space).to(device=cfg["device"])
+    if "model" in cfg.keys():  # Load pretrained model if provided
+      if os.path.isfile(cfg["model"]):
+        state_dict = torch.load(cfg["model"], map_location='cpu')  # Always load tensors onto CPU by default, will shift to GPU if necessary
         if 'conv1.weight' in state_dict.keys():
           for old_key, new_key in (('conv1.weight', 'convs.0.weight'), ('conv1.bias', 'convs.0.bias'), ('conv2.weight', 'convs.2.weight'), ('conv2.bias', 'convs.2.bias'), ('conv3.weight', 'convs.4.weight'), ('conv3.bias', 'convs.4.bias')):
             state_dict[new_key] = state_dict[old_key]  # Re-map state dict for old pretrained models
             del state_dict[old_key]  # Delete old keys for strict load_state_dict
         self.online_net.load_state_dict(state_dict)
-        print("Loading pretrained model: " + args.model)
+        print("Loading pretrained model: " + cfg["model"])
       else:  # Raise error if incorrect model path provided
-        raise FileNotFoundError(args.model)
+        raise FileNotFoundError(cfg["model"])
 
-    self.online_net.train()
+    self.online_net.train() # Puts network on training mode (as opposed to evaluation mode).
 
-    self.target_net = DQN(args, self.action_space).to(device=args.device)
+    self.target_net = DQN(cfg, self.action_space).to(device=cfg["device"])
     self.update_target_net()
-    self.target_net.train()
+    self.target_net.train()  # Puts network on training mode (as opposed to evaluation mode).
     for param in self.target_net.parameters():
       param.requires_grad = False
 

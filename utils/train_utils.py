@@ -1,6 +1,9 @@
 import os
 import json
 import pandas as pd
+import importlib
+import torch.nn as nn
+import math
 
 class ExperimentManager(object):
     def __init__(self, exp_id, model_name, repeats=1):
@@ -50,3 +53,48 @@ class ExperimentManager(object):
                 self._eval[key].append(value)
             else:
                 self._eval[key] = [value]
+
+def initiate_class(full_class_name, argument, multiple_arguments=True):
+    module_name, class_name = full_class_name.rsplit(".", 1)
+    my_module = importlib.import_module(module_name)
+    Class = getattr(my_module, class_name)
+    if argument is None:
+        return Class()
+    if multiple_arguments:
+        return Class(**argument)
+    return Class(argument)
+
+class RewardProcessor:
+    def __init__(self):
+        pass
+
+    def fit(self, reward_batch):
+        pass
+
+    def update(self, single_reward):
+        pass 
+
+    def process(self, reward):
+        return reward
+
+class PopArtRewardProcessor(RewardProcessor):
+    def __init__(self, beta):
+        super(PopArtRewardProcessor, self).__init__()
+        self.beta = beta
+    
+    def fit(self, reward_batch):
+        self.mu = reward_batch.mean()
+        self.std = reward_batch.std()
+        self.v = self.std**2 + self.mu**2
+
+    def update(self, reward):
+        self.mu = (1-self.beta)*self.mu + self.beta*reward
+        self.v = (1-self.beta)*self.v + self.beta*reward**2
+        self.std = math.sqrt(self.v - self.mu**2)
+
+    def process(self, reward):
+        return (reward - self.mu)/self.std
+
+
+def count_parameters(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)

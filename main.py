@@ -12,7 +12,7 @@ import torch
 from tqdm import trange
 
 from agent import Agent
-from memory import ReplayMemory
+from utils.memory import ReplayMemory
 from test import test
 
 

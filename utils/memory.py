@@ -4,8 +4,8 @@ import numpy as np
 import torch
 
 
-Transition_dtype = np.dtype([('timestep', np.int32), ('state', np.uint8, (84, 84)), ('action', np.int32), ('reward', np.float32), ('nonterminal', np.bool_)])
-blank_trans = (0, np.zeros((84, 84), dtype=np.uint8), 0, 0.0, False)
+Transition_dtype = np.dtype([('timestep', np.int32), ('state', np.uint8, (56, 56)), ('action', np.int32), ('reward', np.float32), ('nonterminal', np.bool_)])
+blank_trans = (0, np.zeros((84, 84), dtype=np.uint8), 0, 0.0, False) 
 
 
 # Segment tree data structure where parent node values are sum/max of children node values
@@ -89,17 +89,17 @@ class SegmentTree():
     return self.sum_tree[0]
 
 class ReplayMemory():
-  def __init__(self, args, capacity):
-    self.device = args.device
-    self.capacity = capacity
-    self.history = args.history_length
-    self.discount = args.discount
-    self.n = args.multi_step
-    self.priority_weight = args.priority_weight  # Initial importance sampling weight β, annealed to 1 over course of training
-    self.priority_exponent = args.priority_exponent
+  def __init__(self, cfg):
+    self.device = cfg["device"]
+    self.capacity = cfg["capacity"]
+    self.history = cfg["history_length"]
+    self.discount = cfg["discount"]
+    self.n = cfg["multi_step"]
+    self.priority_weight = cfg["priority_weight"]  # Initial importance sampling weight β, annealed to 1 over course of training
+    self.priority_exponent = cfg["priority_exponent"]
     self.t = 0  # Internal episode timestep counter
     self.n_step_scaling = torch.tensor([self.discount ** i for i in range(self.n)], dtype=torch.float32, device=self.device)  # Discount-scaling vector for n-step returns
-    self.transitions = SegmentTree(capacity)  # Store transitions in a wrap-around cyclic buffer within a sum tree for querying priorities
+    self.transitions = SegmentTree(self.capacity)  # Store transitions in a wrap-around cyclic buffer within a sum tree for querying priorities
 
   # Adds state and action at time t, reward and terminal at time t + 1
   def append(self, state, action, reward, terminal):

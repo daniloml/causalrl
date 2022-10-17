@@ -1,10 +1,20 @@
-experiment: D2SAC
+experiment: MinigridRainbow
 agent: rainbow
 policy: 
-  name: agents.RainbowDQN
+  name: agents.DQN.Rainbow
   device: cuda
   settings:
-
+    atoms:
+    V_min:
+    V_max:
+    discount:
+    norm_clip:
+    history_length: 1
+    architecture:
+    hidden_size:
+    noisy_std:
+    multi_step:
+    # model: 
 
 train:
   data_collection_steps: 3000
@@ -15,32 +25,28 @@ train:
   seed: 100
   save_tensorboard: true
   log_frequency: 5000
-  reward processor:
-    name: utils.train_utils.RewardProcessor
-    settings:
-  #    beta: 0.0001
+  reward_clip: 
+#  reward processor:
+#    name: utils.train_utils.RewardProcessor
+#    settings:
+#    beta: 0.0001
 
 env:
-  name: singleExp.singleUAV.UAV
+  name:
   settings:
-    max_it: 200
-    width: 1000
-    height: 1000
-    d_max: 50
-    r_cov : 100
-    seed: 100
-    out_bounds_penalty: 38
-    reward2_a: 0.3
-    reward2_b: 2.5
-    map_autoencoder_model_path: singleExp/autoencoder_model.ph
 
-buffer:
-  name: singleExp.singleBuffer.ReplayBuffer
+memory:
+  name: utils.memory.ReplayMemory
   settings:
-    buffer_capacity: 300000
-    exploration_code_dim: 256
+    capacity: 100000
+    device: cuda
+    history_length:
+    discount: 0.9
+    multi_step:
+    priority_weight:
+    priority_exponent:
+
 
 logger:
   eval episode performance:
     - step
-    - exploration
