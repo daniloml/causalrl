@@ -25,11 +25,7 @@ train:
   seed: 100
   save_tensorboard: true
   log_frequency: 5000
-  reward_clip: 
-#  reward processor:
-#    name: utils.train_utils.RewardProcessor
-#    settings:
-#    beta: 0.0001
+  reward_clip:
 
 env:
   name:

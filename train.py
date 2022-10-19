@@ -61,7 +61,7 @@ def run(args):
                     save_tb=cfg['train']['save_tensorboard'],
                     log_frequency=cfg['train']['log_frequency'],
                     agent=cfg['agent'])
-    video_recorder = VideoRecorder(None) #self.work_dir if cfg.save_video else None)
+    video_recorder = VideoRecorder(exp_folder + "videos/") #self.work_dir if cfg.save_video else None)
     eval_monitor = EvalMonitor(cfg['logger'])
     
     # Env init
@@ -98,25 +98,9 @@ def run(args):
                           reset_noise_steps=cfg['train']['replay_frequency'],
                           reward_clip=cfg['train']['reward_clip'])
 
-#    reward_processor = initiate_class(cfg['train']['reward processor']['name'], cfg['train']['reward processor']['settings'])
-#    reward_processor.fit(memory.reward)
-
     step, episode, episode_reward, done = 0, 0, 0, True
     start_time = time.time()
-    for step in range(cfg['train']['train_steps']):
-        memory.priority_weight = min(memory.priority_weight + priority_weight_increase, 1)  # Anneal importance sampling weight β to 1
-        if step % cfg["replay_frequency"] == 0:
-            policy.reset_noise()
-            policy.update(memory, logger, step)
-            
-        if step % cfg['checkpoint_frequency'] == 0:
-            policy.save(exp_folder+"checkpoint/", f"checkpoint{step}.ph")
-
-        # evaluate agent periodically
-        if step % cfg['train']['eval_frequency'] == 0:
-            logger.log('eval/episode', episode, step)
-            eval_policy(policy, logger, eval_monitor, video_recorder, ENV_SEED, env_cfg, step, cfg['train']['nb_eval_episodes'])
-
+    for step in range(cfg['train']['train_steps']):    
         # log end of episode or truncation and reset env
         if done or (episode_step >= cfg['train']['max_episode_steps']):
             if step > 0:
@@ -138,7 +122,6 @@ def run(args):
         action = policy.act(obs)
 
         next_obs, reward, done, _ = env.step(action)
-#        reward_processor.update(reward)
 
         episode_reward += reward
         if args.reward_clip > 0:
@@ -147,6 +130,23 @@ def run(args):
 
         obs = next_obs
         episode_step += 1
+
+        # Train
+        memory.priority_weight = min(memory.priority_weight + priority_weight_increase, 1)  # Anneal importance sampling weight β to 1
+        if step % cfg["replay_frequency"] == 0:
+            policy.reset_noise()
+            policy.update(memory, logger, step)
+        # Update target network
+        if step % cfg["target_update"] == 0:
+            policy.update_target_net(logger, step)
+
+        # Test
+        if step % cfg['train']['eval_frequency'] == 0:
+            logger.log('eval/episode', episode, step)
+            eval_policy(policy, logger, eval_monitor, video_recorder, ENV_SEED, env_cfg, step, cfg['train']['nb_eval_episodes'])
+
+        if step % cfg['checkpoint_frequency'] == 0:
+            policy.save(exp_folder+"checkpoint/", f"checkpoint_{step}.ph")
         
     policy.save(exp_folder+"models/")
 
@@ -168,7 +168,7 @@ def data_collection_noise(env,
 
         # sample action for data collection
         action = policy.act(obs)
-        next_obs, reward, done, _ = env.step(action)
+        _, reward, done, _ = env.step(action)
         if reward_clip > 0:
             reward = max(min(reward, args.reward_clip), -args.reward_clip) 
         memory.append(obs, action, reward, done)

@@ -60,8 +60,8 @@ class Rainbow(nn.Module):
     self.n = cfg["multi_step"]
     self.discount = cfg["discount"]
     self.norm_clip = cfg["norm_clip"]
-
     self.online_net = DQN(cfg, self.action_space).to(device=cfg["device"])
+    
     if "model" in cfg.keys():  # Load pretrained model if provided
       if os.path.isfile(cfg["model"]):
         state_dict = torch.load(cfg["model"], map_location='cpu')  # Always load tensors onto CPU by default, will shift to GPU if necessary
@@ -82,7 +82,7 @@ class Rainbow(nn.Module):
     for param in self.target_net.parameters():
       param.requires_grad = False
 
-    self.optimiser = optim.Adam(self.online_net.parameters(), lr=args.learning_rate, eps=args.adam_eps)
+    self.optimiser = optim.Adam(self.online_net.parameters(), lr=cfg["learning_rate"], eps=cfg["adam_eps"])
 
   # Resets noisy weights in all linear layers (of online net only)
   def reset_noise(self):
@@ -90,16 +90,20 @@ class Rainbow(nn.Module):
 
   # Acts based on single state (no batch)
   def act(self, state):
+    self.eval()
     with torch.no_grad():
-      return (self.online_net(state.unsqueeze(0)) * self.support).sum(2).argmax(1).item()
+      action = (self.online_net(state.unsqueeze(0)) * self.support).sum(2).argmax(1).item()
+    self.train()
+    return action
 
   # Acts with an ε-greedy policy (used for evaluation only)
   def act_e_greedy(self, state, epsilon=0.001):  # High ε can reduce evaluation scores drastically
     return np.random.randint(0, self.action_space) if np.random.random() < epsilon else self.act(state)
 
-  def learn(self, mem):
+  def update(self, mem, logger, step):
     # Sample transitions
     idxs, states, actions, returns, next_states, nonterminals, weights = mem.sample(self.batch_size)
+    logger.log('train/batch_returns', returns.mean(), step)
 
     # Calculate current state probabilities (online network noise already sampled)
     log_ps = self.online_net(states, log=True)  # Log probabilities log p(s_t, ·; θonline)
@@ -131,8 +135,12 @@ class Rainbow(nn.Module):
       m.view(-1).index_add_(0, (u + offset).view(-1), (pns_a * (b - l.float())).view(-1))  # m_u = m_u + p(s_t+n, a*)(b - l)
 
     loss = -torch.sum(m * log_ps_a, 1)  # Cross-entropy loss (minimises DKL(m||p(s_t, a_t)))
+    weighted_loss = (weights * loss).mean()
+    logger.log('train/loss', loss.mean(), step)
+    logger.log('train/weighted_loss', weighted_loss, step)
+
     self.online_net.zero_grad()
-    (weights * loss).mean().backward()  # Backpropagate importance-weighted minibatch loss
+    weighted_loss.backward()  # Backpropagate importance-weighted minibatch loss
     clip_grad_norm_(self.online_net.parameters(), self.norm_clip)  # Clip gradients by L2 norm
     self.optimiser.step()
 
