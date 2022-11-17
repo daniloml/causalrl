@@ -28,8 +28,11 @@ train:
   reward_clip:
 
 env:
-  name:
+  name: model.environments.env.MiniGrid
   settings:
+    name: dynamic obstacles
+    full_observability: false
+    action_bonus: false
 
 memory:
   name: utils.memory.ReplayMemory
